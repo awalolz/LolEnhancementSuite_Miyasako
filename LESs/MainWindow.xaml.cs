@@ -1,23 +1,15 @@
-﻿using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
 using System.Windows.Threading;
 using System.Xml;
+using Microsoft.Win32;
 
 namespace LESs
 {
@@ -26,22 +18,47 @@ namespace LESs
     /// </summary>
     public partial class MainWindow : Window
     {
-        const string IntendedVersion = "0.0.1.80";
+        const string IntendedVersion = "0.0.1.94";
 
         private readonly BackgroundWorker worker = new BackgroundWorker();
+        private bool wasPatched = true;
 
         public MainWindow()
         {
             InitializeComponent();
-            FindButton.AddHandler(Button.MouseDownEvent, new RoutedEventHandler(FindButton_MouseDown), true);
+            FindButton.AddHandler(MouseDownEvent, new RoutedEventHandler(FindButton_MouseDown), true);
             LeagueVersionLabel.Content = IntendedVersion;
             if (File.Exists("debug.log"))
+            {
                 File.Delete("debug.log");
+            }
 
             File.Create("debug.log");
 
             if (Directory.Exists("temp"))
+            {
                 Directory.Delete("temp", true);
+            }
+
+            if (Directory.Exists(Path.Combine(Path.GetPathRoot(Environment.SystemDirectory), "wm")))
+            {
+                MessageBox.Show(
+                    "You may have malware on your system due to getting this application from an unknown source. Please delete C:/wm/ and the file inside it and then download this application from http://da.viddiaz.com/LESs");
+            }
+
+            worker.DoWork += worker_DoWork;
+            worker.RunWorkerCompleted += worker_RunWorkerCompleted;
+            if (!Debugger.IsAttached)
+            {
+                AppDomain.CurrentDomain.FirstChanceException += CurrentDomain_FirstChanceException;
+            }
+        }
+
+        void CurrentDomain_FirstChanceException(object sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
+        {
+            Exception ex = e.Exception;
+            MessageBox.Show(ex.Message + Environment.NewLine + ex.StackTrace + Environment.NewLine);
+            this.wasPatched = false;
         }
 
         private void MainGrid_Loaded(object sender, RoutedEventArgs e)
@@ -51,28 +68,33 @@ namespace LESs
                 MessageBox.Show("Missing mods directory. Ensure that all files were extracted properly.", "Missing files");
             }
 
-            var ModList = Directory.GetDirectories("mods");
+            var modList = Directory.GetDirectories("mods");
 
-            foreach (string Mod in ModList)
+            foreach (string mod in modList)
             {
-                CheckBox Check = new CheckBox();
-                Check.IsChecked = true;
-                Check.Content = Mod.Replace("mods\\", "");
-                if (File.Exists(Path.Combine(Mod, "disabled")))
-                    Check.IsChecked = false;
-                ModsListBox.Items.Add(Check);
+                var check = new CheckBox();
+                check.IsChecked = true;
+                check.Content = mod.Replace("mods\\", string.Empty);
+                if (File.Exists(Path.Combine(mod, "disabled")))
+                {
+                    check.IsChecked = false;
+                }
+
+                ModsListBox.Items.Add(check);
             }
         }
 
         private void ModsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            CheckBox box = (CheckBox)ModsListBox.SelectedItem;
+            var box = (CheckBox)ModsListBox.SelectedItem;
 
             if (box == null)
+            {
                 return;
+            }
 
-            string SelectedMod = (string)box.Content;
-            using (XmlReader reader = XmlReader.Create(Path.Combine("mods", SelectedMod, "info.xml")))
+            var selectedMod = (string)box.Content;
+            using (XmlReader reader = XmlReader.Create(Path.Combine("mods", selectedMod, "info.xml")))
             {
                 while (reader.Read())
                 {
@@ -97,52 +119,77 @@ namespace LESs
         private void FindButton_MouseDown(object sender, RoutedEventArgs e)
         {
             PatchButton.IsEnabled = false;
-            OpenFileDialog FindLeagueDialog = new OpenFileDialog();
+            var findLeagueDialog = new OpenFileDialog();
 
-            FindLeagueDialog.InitialDirectory = Path.Combine("C:\\", "Riot Games", "League of Legends");
-            FindLeagueDialog.DefaultExt = ".exe";
-            FindLeagueDialog.Filter = "League of Legends Launcher|lol.launcher.exe";
+            findLeagueDialog.InitialDirectory = !Directory.Exists(Path.Combine("C:\\", "Riot Games", "League of Legends")) ? Path.Combine("C:\\", "Program Files (x86)", "GarenaLoL", "GameData", "Apps", "LoL") : Path.Combine("C:\\", "Riot Games", "League of Legends");
+            findLeagueDialog.DefaultExt = ".exe";
+            findLeagueDialog.Filter = "League of Legends Launcher|lol.launcher*.exe|Garena Launcher|lol.exe";
 
-            Nullable<bool> result = FindLeagueDialog.ShowDialog();
+            bool? result = findLeagueDialog.ShowDialog();
 
             if (result == true)
             {
-                string filename = FindLeagueDialog.FileName.Replace("lol.launcher.exe", "");
-                string RADLocation = Path.Combine(filename, "RADS", "projects", "lol_air_client", "releases");
-
-                File.AppendAllText("debug.log", filename + Environment.NewLine + RADLocation + Environment.NewLine);
-
-                var VersionDirectories = Directory.GetDirectories(RADLocation);
-                string FinalDirectory = "";
-                string Version = "";
-                int VersionCompare = 0;
-                foreach (string x in VersionDirectories)
+                File.AppendAllText("debug.log", findLeagueDialog.FileName + Environment.NewLine);
+                string filename = findLeagueDialog.FileName.Replace("lol.launcher.exe", string.Empty).Replace("lol.launcher.admin.exe", string.Empty);
+                if (filename.Contains("lol.exe"))
                 {
-                    string Compare1 = x.Substring(x.IndexOf("releases\\")).Replace("releases\\", "");
-                    int CompareVersion = Convert.ToInt32(Compare1.Substring(0, 8).Replace(".", ""));
+                    // Ga ga ga garena
+                    PatchButton.IsEnabled = true;
+                    RemoveButton.IsEnabled = false; // Can't automatically remove on garena installations!
 
-                    if (CompareVersion > VersionCompare)
+                    filename = filename.Replace("lol.exe", string.Empty);
+
+                    LocationTextbox.Text = Path.Combine(filename, "Air");
+                }
+                else
+                {
+                    string radLocation = Path.Combine(filename, "RADS", "projects", "lol_air_client", "releases");
+
+                    File.AppendAllText("debug.log", filename + Environment.NewLine + radLocation + Environment.NewLine);
+
+                    var versionDirectories = Directory.GetDirectories(radLocation);
+                    string finalDirectory = string.Empty;
+                    string version = string.Empty;
+                    int versionCompare = 0;
+                    foreach (string x in versionDirectories)
                     {
-                        VersionCompare = CompareVersion;
-                        Version = x.Replace(RADLocation + "\\", "");
-                        FinalDirectory = x;
+                        string compare1 = x.Substring(x.IndexOf("releases\\")).Replace("releases\\", string.Empty);
+                        int compareVersion;
+                        try
+                        {
+                            compareVersion = Convert.ToInt32(compare1.Substring(0, 8).Replace(".", string.Empty));
+                        }
+                        catch (ArgumentOutOfRangeException) // fix for version numbers < 0.0.1.10
+                        {
+                            // Ignore
+                            compareVersion = 0;
+                        }
+
+                        if (compareVersion > versionCompare)
+                        {
+                            versionCompare = compareVersion;
+                            version = x.Replace(radLocation + "\\", string.Empty);
+                            finalDirectory = x;
+                        }
+
+                        File.AppendAllText("debug.log", x + Environment.NewLine + compareVersion + Environment.NewLine);
                     }
 
-                    File.AppendAllText("debug.log", x + Environment.NewLine + CompareVersion + Environment.NewLine);
+                    if (version != IntendedVersion)
+                    {
+                        MessageBoxResult versionMismatchResult = MessageBox.Show("This version of LESs is intended for " + IntendedVersion + ". Your current version of League of Legends is " + version + ". Continue? This could harm your installation.", "Invalid Version", MessageBoxButton.YesNo);
+                        if (versionMismatchResult == MessageBoxResult.No)
+                            return;
+                    }
+
+                    PatchButton.IsEnabled = true;
+                    RemoveButton.IsEnabled = true;
+
+                    LocationTextbox.Text = Path.Combine(finalDirectory, "deploy");
                 }
-
-                if (Version != IntendedVersion)
-                {
-                    MessageBoxResult versionMismatchResult = MessageBox.Show("This version of LESs is intended for " + IntendedVersion + ". Your current version of League of Legends is " + Version + ". Continue? This could harm your installation.", "Invalid Version", MessageBoxButton.YesNo);
-                    if (versionMismatchResult == MessageBoxResult.No)
-                        return;
-                }
-
-                PatchButton.IsEnabled = true;
-
-                LocationTextbox.Text = Path.Combine(FinalDirectory, "deploy");
 
                 Directory.CreateDirectory(Path.Combine(LocationTextbox.Text, "LESsBackup"));
+                Directory.CreateDirectory(Path.Combine(LocationTextbox.Text, "LESsBackup", IntendedVersion));
             }
         }
 
@@ -150,53 +197,67 @@ namespace LESs
         {
             PatchButton.IsEnabled = false;
 
-            File.AppendAllText("debug.log", "Starting patch" + Environment.NewLine);
+            File.AppendAllText("debug.log", "Starting patch" + Environment.NewLine); // ToDo: Localize
 
-            worker.DoWork += worker_DoWork;
-            worker.RunWorkerCompleted += worker_RunWorkerCompleted;
             worker.RunWorkerAsync();
+        }
+
+        private void RemoveButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (File.Exists(Path.Combine(LocationTextbox.Text.Substring(0, LocationTextbox.Text.Length - 7), "S_OK")))
+            {
+                File.Delete(Path.Combine(LocationTextbox.Text.Substring(0, LocationTextbox.Text.Length - 7), "S_OK"));
+                MessageBox.Show("LESs will be removed next time League of Legends launches!");
+                StatusLabel.Content = "Removed LESs";
+            }
         }
 
         private void worker_DoWork(object sender, DoWorkEventArgs e)
         {
             ItemCollection modCollection = null;
-            Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
-            {
-                modCollection = ModsListBox.Items;
-            }));
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.Input,
+                new ThreadStart(() => { modCollection = ModsListBox.Items; }));
 
-            //Wait for UI thread to respond...
+            // Wait for UI thread to respond...
             while (modCollection == null)
+            {
                 ;
+            }
 
             foreach (var x in modCollection)
             {
-                CheckBox box = (CheckBox)x;
-                bool? IsBoxChecked = null;
-                string BoxName = "";
-                Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
-                {
-                    if ((bool)box.IsChecked)
-                    {
-                        IsBoxChecked = true;
-                        BoxName = (string)box.Content;
-                    }
-                    else
-                    {
-                        IsBoxChecked = false;
-                        BoxName = "blah";
-                    }
-                }));
+                var box = (CheckBox)x;
+                bool? isBoxChecked = null;
+                string boxName = string.Empty;
+                Dispatcher.BeginInvoke(
+                    DispatcherPriority.Input,
+                    new ThreadStart(
+                        () =>
+                            {
+                                if (box.IsChecked != null && (bool)box.IsChecked)
+                                {
+                                    isBoxChecked = true;
+                                    boxName = (string)box.Content;
+                                }
+                                else
+                                {
+                                    isBoxChecked = false;
+                                    boxName = "blah";
+                                }
+                            }));
 
-                //Wait for UI thread to respond...
-                while (IsBoxChecked == null || String.IsNullOrEmpty(BoxName))
+                // Wait for UI thread to respond...
+                while (isBoxChecked == null || String.IsNullOrEmpty(boxName))
+                {
                     ;
+                }
 
-                if ((bool)IsBoxChecked)
+                if ((bool)isBoxChecked)
                 {
-                    int AmountOfPatches = 1;
+                    int amountOfPatches = 1;
 
-                    using (XmlReader reader = XmlReader.Create(Path.Combine("mods", BoxName, "info.xml")))
+                    using (XmlReader reader = XmlReader.Create(Path.Combine("mods", boxName, "info.xml")))
                     {
                         while (reader.Read())
                         {
@@ -206,121 +267,149 @@ namespace LESs
                                 {
                                     case "files":
                                         reader.Read();
-                                        AmountOfPatches = Convert.ToInt32(reader.Value);
+                                        amountOfPatches = Convert.ToInt32(reader.Value);
                                         break;
                                 }
                             }
                         }
                     }
-                    
-                    for (int i = 0; i < AmountOfPatches; i++)
+
+                    for (int i = 0; i < amountOfPatches; i++)
                     {
                         Directory.CreateDirectory("temp");
-                        Patcher(BoxName, i);
+                        Patcher(boxName, i);
                         DeletePathWithLongFileNames(Path.GetFullPath("temp"));
                     }
                 }
             }
         }
 
-        private void worker_RunWorkerCompleted(object sender,
-                                       RunWorkerCompletedEventArgs e)
+        private void worker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
-            MessageBox.Show("LESs has been successfully patched into League of Legends!");
+            MessageBox.Show(
+                this.wasPatched
+                    ? "LESs has been successfully patched into League of Legends!"
+                    : "LESs encountered errors during patching. However, some patches may still be applied.");
             PatchButton.IsEnabled = true;
             StatusLabel.Content = "Done patching!";
         }
 
-        private void Patcher(string ModName, int AmountOfPatches)
+        private void Patcher(string modName, int amountOfPatches)
         {
-            string PatchNumber = "";
-            if (AmountOfPatches >= 1)
-                PatchNumber = AmountOfPatches.ToString();
+            string patchNumber = string.Empty;
+            if (amountOfPatches >= 1)
+            {
+                patchNumber = amountOfPatches.ToString();
+            }
 
-            string[] ModDetails = File.ReadAllLines(Path.Combine("mods", ModName, "patch" + PatchNumber + ".txt"));
-            string FileLocation = "null";
-            string TryFindClass = "null";
-            string TraitToModify = "null";
-            foreach (string s in ModDetails)
+            string[] modDetails = File.ReadAllLines(Path.Combine("mods", modName, "patch" + patchNumber + ".txt"));
+            string fileLocation = "null";
+            string tryFindClass = "null";
+            string traitToModify = "null";
+            bool isNewTrait = false;
+            foreach (string s in modDetails)
             {
                 if (s.StartsWith("#"))
                 {
-                    TryFindClass = s.Substring(1);
+                    tryFindClass = s.Substring(1);
                 }
                 else if (s.StartsWith("@@@"))
                 {
-                    TraitToModify = s.Substring(3);
+                    traitToModify = s.Substring(3);
+                }
+                else if (s.StartsWith("@+@")) 
+                {
+                    // Insert the new trait above this one
+                    traitToModify = s.Substring(3);
+                    isNewTrait = true;
                 }
                 else if (s.StartsWith("~"))
                 {
-                    FileLocation = s.Substring(1);
+                    fileLocation = s.Substring(1);
                 }
             }
 
-            File.AppendAllText("debug.log", "Patching " + ModName + PatchNumber + Environment.NewLine);
+            File.AppendAllText("debug.log", "Patching " + modName + patchNumber + Environment.NewLine); // ToDo: Localize
 
-            string[] FilePart = FileLocation.Split('/');
-            string FileName = FilePart[FilePart.Length - 1];
+            string[] filePart = fileLocation.Split('/');
+            string fileName = filePart[filePart.Length - 1];
 
-            string n = string.Format("{0:MM-dd_hhmmss}", DateTime.Now);
-
-            string LocationText = "";
+            string locationText = string.Empty;
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
             {
-                LocationText = LocationTextbox.Text;
+                locationText = LocationTextbox.Text;
             }));
 
             //Wait for UI thread to respond...
-            while (String.IsNullOrEmpty(LocationText))
+            while (String.IsNullOrEmpty(locationText))
                 ;
 
-            File.Copy(Path.Combine(LocationText, FileLocation), Path.Combine(LocationText, "LESsBackup", FileName + "." + n + ".bak"));
-            File.Copy(Path.Combine(LocationText, FileLocation), Path.Combine("temp", FileName));
-
-            Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
+            string n = string.Empty;
+            foreach (string s in filePart.Take(filePart.Length - 1))
             {
-                StatusLabel.Content = "Exporting patch " + ModName;
-            }));
-
-            File.AppendAllText("debug.log", "Running abcexport" + Environment.NewLine);
-
-            ProcessStartInfo Export = new ProcessStartInfo();
-            Export.FileName = "abcexport.exe";
-            Export.Arguments = Path.Combine("temp", FileName);
-            var ExportProc = Process.Start(Export);
-            ExportProc.WaitForExit();
-
-            Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
+                n = Path.Combine(n, s);
+                if (!Directory.Exists(Path.Combine(locationText, "LESsBackup", IntendedVersion, n)))
+                {
+                    Directory.CreateDirectory(Path.Combine(locationText, "LESsBackup", IntendedVersion, n));
+                }
+            }
+            if (!File.Exists(Path.Combine(locationText, "LESsBackup", IntendedVersion, fileLocation)))
             {
-                StatusLabel.Content = "Dissasembling patch (" + ModName + ")";
-            }));
-
-            string[] ABCFiles = Directory.GetFiles("temp", "*.abc");
-
-            File.AppendAllText("debug.log", "Got " + ABCFiles.Length + " files" + Environment.NewLine);
-
-            foreach (string s in ABCFiles)
-            {
-                ProcessStartInfo Disassemble = new ProcessStartInfo();
-                Disassemble.FileName = "rabcdasm.exe";
-                Disassemble.Arguments = s;
-                Disassemble.UseShellExecute = false;
-                Disassemble.CreateNoWindow = true;
-                var DisasmProc = Process.Start(Disassemble);
-                DisasmProc.WaitForExit();
+                File.Copy(Path.Combine(locationText, fileLocation), Path.Combine(locationText, "LESsBackup", IntendedVersion, fileLocation));
             }
 
-            if (TryFindClass.IndexOf(':') == 0)
+            File.Copy(Path.Combine(locationText, fileLocation), Path.Combine("temp", fileName));
+
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
             {
-                File.AppendAllText("debug.log", "INVALID MOD!!!" + Environment.NewLine);
-                throw new Exception("Invalid mod " + ModName);
+                StatusLabel.Content = "Exporting patch " + modName;
+            }));
+
+            File.AppendAllText("debug.log", "Running abcexport" + Environment.NewLine); // ToDo: Localize
+
+            var export = new ProcessStartInfo();
+            export.FileName = "abcexport.exe";
+            export.Arguments = Path.Combine("temp", fileName);
+            var ExportProc = Process.Start(export);
+            if (ExportProc != null)
+            {
+                ExportProc.WaitForExit();
+            }
+
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
+            {
+                StatusLabel.Content = "Disassembling patch (" + modName + ")";
+            }));
+
+            string[] abcFiles = Directory.GetFiles("temp", "*.abc");
+
+            File.AppendAllText("debug.log", "Got " + abcFiles.Length + " files" + Environment.NewLine); // ToDo: Localize
+
+            foreach (string s in abcFiles)
+            {
+                var disassemble = new ProcessStartInfo();
+                disassemble.FileName = "rabcdasm.exe";
+                disassemble.Arguments = s;
+                disassemble.UseShellExecute = false;
+                disassemble.CreateNoWindow = true;
+                var disasmProc = Process.Start(disassemble);
+                if (disasmProc != null)
+                {
+                    disasmProc.WaitForExit();
+                }
+            }
+
+            if (tryFindClass.IndexOf(':') == 0)
+            {
+                File.AppendAllText("debug.log", "INVALID MOD!!!" + Environment.NewLine); // ToDo: Localize
+                throw new Exception("Invalid mod " + modName);
             }
 
             List<string> directories = Directory.GetDirectories("temp", "*", SearchOption.AllDirectories).ToList();
 
             //Get all directories that match the requested class to modify
-            string SearchFor = TryFindClass.Substring(0, TryFindClass.IndexOf(':'));
-            List<string> FoundDirectories = new List<string>();
+            string searchFor = tryFindClass.Substring(0, tryFindClass.IndexOf(':'));
+            var foundDirectories = new List<string>();
             foreach (string s in directories)
             {
                 if (!s.Contains("com"))
@@ -329,119 +418,170 @@ namespace LESs
                 string tempS = s;
                 tempS = tempS.Substring(tempS.IndexOf("com"));
                 tempS = tempS.Replace("\\", ".");
-                if (tempS == SearchFor)
+                if (tempS == searchFor)
                 {
-                    FoundDirectories.Add(s);
+                    foundDirectories.Add(s);
                 }
             }
 
-            if (FoundDirectories.Count == 0)
+            if (foundDirectories.Count == 0)
             {
-                File.AppendAllText("debug.log", "No class matching " + SearchFor + " for mod " + ModName + Environment.NewLine);
-                throw new Exception("No class matching " + SearchFor + " for mod " + ModName);
+                File.AppendAllText("debug.log", "No class matching " + searchFor + " for mod " + modName + Environment.NewLine); // ToDo: Localize
+                throw new Exception("No class matching " + searchFor + " for mod " + modName);
             }
 
-            string FinalDirectory = "";
-            string Class = TryFindClass.Substring(TryFindClass.IndexOf(':')).Replace(":", "");
+            string finalDirectory = string.Empty;
+            string Class = tryFindClass.Substring(tryFindClass.IndexOf(':')).Replace(":", string.Empty);
             //Find the directory that has the requested class
-            foreach (string s in FoundDirectories)
+            foreach (string s in foundDirectories)
             {
                 string[] m = Directory.GetFiles(s);
                 string x = Path.Combine(s, Class + ".class.asasm");
                 if (m.Contains(x))
                 {
-                    FinalDirectory = s;
+                    finalDirectory = s;
                 }
             }
 
-            string[] ClassModifier = File.ReadAllLines(Path.Combine(FinalDirectory, Class + ".class.asasm"));
-            int TraitStartPosition = 0;
-            int TraitEndLocation = 0;
-            //Get location of trait
+            string[] ClassModifier = File.ReadAllLines(Path.Combine(finalDirectory, Class + ".class.asasm"));
+
+            //return if the new trait already exists
+            if (isNewTrait)
+            {
+                foreach (string l in ClassModifier)
+                {
+                    if (l == modDetails[3])
+                        return;
+                }
+            }
+
+            int traitStartPosition = 0;
+            int traitEndLocation = 0;
+
+            // Get location of trait
             for (int i = 0; i < ClassModifier.Length; i++)
             {
-                if (ClassModifier[i] == TraitToModify)
+                if (ClassModifier[i] == traitToModify)
                 {
-                    TraitStartPosition = i;
+                    traitStartPosition = i;
                     break;
                 }
             }
 
-            //Get end location of trait
-            for (int i = TraitStartPosition; i < ClassModifier.Length; i++)
+            if (traitStartPosition == 0)
             {
-                if (ClassModifier[i].Trim() == "end ; trait")
+                File.AppendAllText("debug.log", "Trait start location was not found! Corrupt mod?"); // ToDo: Localize
+                throw new Exception("Trait start location was not found! Corrupt mod?");
+            }
+
+            if (!isNewTrait)
+            {
+                // Get end location of trait
+                for (int i = traitStartPosition; i < ClassModifier.Length; i++)
                 {
-                    TraitEndLocation = i + 1;
-                    break;
+                    if (ClassModifier[i].Trim() == "end ; method")
+                    {
+                        if (ClassModifier[i + 1].Trim() == "end ; trait")
+                        {
+                            traitEndLocation = i + 2;
+                        }
+                        else
+                        {
+                            traitEndLocation = i + 1;
+                        }
+                        break;
+                    }
                 }
+
+                if (traitEndLocation < traitStartPosition)
+                {
+                    File.AppendAllText("debug.log", "Trait end location was smaller than trait start location! " + traitEndLocation + ", " + traitStartPosition); // ToDo: Localize
+                    throw new Exception("Trait end location was smaller than trait start location! " + traitEndLocation + ", " + traitStartPosition);
+                }
+
+                var startTrait = new string[traitStartPosition];
+                Array.Copy(ClassModifier, startTrait, traitStartPosition);
+                var afterTrait = new string[ClassModifier.Length - traitEndLocation];
+                Array.Copy(ClassModifier, traitEndLocation, afterTrait, 0, ClassModifier.Length - traitEndLocation);
+
+                var finalClass = new string[startTrait.Length + (modDetails.Length - 3) + afterTrait.Length];
+                Array.Copy(startTrait, finalClass, traitStartPosition);
+                Array.Copy(modDetails, 3, finalClass, traitStartPosition, modDetails.Length - 3);
+                Array.Copy(afterTrait, 0, finalClass, traitStartPosition + (modDetails.Length - 3), afterTrait.Length);
+
+                File.Delete(Path.Combine(finalDirectory, Class + ".class.asasm"));
+                File.WriteAllLines(Path.Combine(finalDirectory, Class + ".class.asasm"), finalClass);
+            }
+            else
+            {
+                var finalClass = new string[ClassModifier.Length + (modDetails.Length - 3)];
+                Array.Copy(ClassModifier, 0, finalClass, 0, traitStartPosition);
+                Array.Copy(modDetails, 3, finalClass, traitStartPosition, modDetails.Length - 3);
+                Array.Copy(ClassModifier, traitStartPosition, finalClass, traitStartPosition + modDetails.Length - 3, ClassModifier.Length - traitStartPosition);
+
+                File.Delete(Path.Combine(finalDirectory, Class + ".class.asasm"));
+                File.WriteAllLines(Path.Combine(finalDirectory, Class + ".class.asasm"), finalClass);
+
             }
 
-            string[] StartTrait = new string[TraitStartPosition];
-            Array.Copy(ClassModifier, StartTrait, TraitStartPosition);
-            string[] AfterTrait = new string[ClassModifier.Length - TraitEndLocation];
-            Array.Copy(ClassModifier, TraitEndLocation, AfterTrait, 0, ClassModifier.Length - TraitEndLocation);
-
-            string[] FinalClass = new string[StartTrait.Length + (ModDetails.Length - 3) + AfterTrait.Length];
-            Array.Copy(StartTrait, FinalClass, TraitStartPosition);
-            Array.Copy(ModDetails, 3, FinalClass, TraitStartPosition, (ModDetails.Length - 3));
-            Array.Copy(AfterTrait, 0, FinalClass, TraitStartPosition + (ModDetails.Length - 3), AfterTrait.Length);
-
-            File.Delete(Path.Combine(FinalDirectory, Class + ".class.asasm"));
-            File.WriteAllLines(Path.Combine(FinalDirectory, Class + ".class.asasm"), FinalClass);
-
-            string ReAssembleLocation = FinalDirectory.Substring(0, FinalDirectory.IndexOf("com")).Replace("temp\\", "");
-            string AbcNumber = ReAssembleLocation.Substring(ReAssembleLocation.IndexOf('-')).Replace("-", "").Replace("\\", "");
+            var reAssembleLocation = finalDirectory.Substring(0, finalDirectory.IndexOf("com")).Replace("temp\\", string.Empty);
+            string abcNumber = reAssembleLocation.Substring(reAssembleLocation.IndexOf('-')).Replace("-", string.Empty).Replace("\\", string.Empty);
 
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
             {
-                StatusLabel.Content = "Repackaging " + ModName;
+                StatusLabel.Content = "Repackaging " + modName;
             }));
 
-            ProcessStartInfo ReAsm = new ProcessStartInfo();
-            ReAsm.FileName = "rabcasm.exe";
-            ReAsm.RedirectStandardError = true;
-            ReAsm.UseShellExecute = false;
-            ReAsm.Arguments = Path.Combine("temp", ReAssembleLocation, ReAssembleLocation.Replace("\\", "") + ".main.asasm");
-            var ReAsmProc = Process.Start(ReAsm);
-            while (!ReAsmProc.StandardError.EndOfStream)
+            var reAsm = new ProcessStartInfo();
+            reAsm.FileName = "rabcasm.exe";
+            reAsm.RedirectStandardError = true;
+            reAsm.UseShellExecute = false;
+            reAsm.Arguments = Path.Combine("temp", reAssembleLocation, reAssembleLocation.Replace("\\", string.Empty) + ".main.asasm");
+            var reAsmProc = Process.Start(reAsm);
+            while (reAsmProc != null && !reAsmProc.StandardError.EndOfStream)
             {
-                string line = ReAsmProc.StandardError.ReadLine();
+                string line = reAsmProc.StandardError.ReadLine();
                 File.AppendAllText("debug.log", line + Environment.NewLine);
             }
-            ReAsmProc.WaitForExit();
+            if (reAsmProc != null)
+            {
+                reAsmProc.WaitForExit();
+            }
 
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
             {
-                StatusLabel.Content = "Finishing touches for " + ModName;
+                StatusLabel.Content = "Finishing touches for " + modName;
             }));
 
-            ProcessStartInfo DoPatch = new ProcessStartInfo();
-            DoPatch.FileName = "abcreplace.exe";
-            DoPatch.RedirectStandardError = true;
-            DoPatch.UseShellExecute = false;
-            DoPatch.Arguments = Path.Combine("temp", FileName) + " " + AbcNumber + " " + Path.Combine("temp", ReAssembleLocation, ReAssembleLocation.Replace("\\", "") + ".main.abc");
-            var FinalPatchProc = Process.Start(DoPatch);
-            while (!FinalPatchProc.StandardError.EndOfStream)
+            var doPatch = new ProcessStartInfo();
+            doPatch.FileName = "abcreplace.exe";
+            doPatch.RedirectStandardError = true;
+            doPatch.UseShellExecute = false;
+            doPatch.Arguments = Path.Combine("temp", fileName) + " " + abcNumber + " " + Path.Combine("temp", reAssembleLocation, reAssembleLocation.Replace("\\", string.Empty) + ".main.abc");
+            var finalPatchProc = Process.Start(doPatch);
+            while (finalPatchProc != null && !finalPatchProc.StandardError.EndOfStream)
             {
-                string line = FinalPatchProc.StandardError.ReadLine();
+                string line = finalPatchProc.StandardError.ReadLine();
                 File.AppendAllText("debug.log", line + Environment.NewLine);
             }
-            FinalPatchProc.WaitForExit();
+            if (finalPatchProc != null)
+            {
+                finalPatchProc.WaitForExit();
+            }
 
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new ThreadStart(() =>
             {
-                StatusLabel.Content = "Done patching " + ModName + "!";
+                StatusLabel.Content = "Done patching " + modName + "!";
             }));
 
-            File.Copy(Path.Combine("temp", FileName), Path.Combine(LocationText, FileLocation), true);
+            File.Copy(Path.Combine("temp", fileName), Path.Combine(locationText, fileLocation), true);
         }
 
         private static void DeletePathWithLongFileNames(string path)
         {
             var tmpPath = @"\\?\" + path;
-            Scripting.FileSystemObject fso = new Scripting.FileSystemObject() as Scripting.FileSystemObject;
-            fso.DeleteFolder(tmpPath, true); 
+            var fso = new Scripting.FileSystemObject();
+            fso.DeleteFolder(tmpPath, true);
         }
     }
 }

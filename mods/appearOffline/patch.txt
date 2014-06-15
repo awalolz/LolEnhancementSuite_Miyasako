@@ -27,9 +27,10 @@
       coerce              QName(PackageNamespace("org.jivesoftware.xiff.data"), "Presence")
       setlocal3
 
-      getlocal1
-      pushstring          "dnd"
-      ifne                L25
+      getlex              QName(PackageNamespace("com.riotgames.pvpnet.system.config"), "UserPreferencesManager")
+      getproperty         QName(PackageNamespace(""), "userPrefs")
+      getproperty         QName(PackageNamespace(""), "showOfflineFriends")
+      iffalse             L26
 
       findpropstrict      QName(PackageNamespace("org.jivesoftware.xiff.data"), "Presence")
       pushnull
@@ -42,7 +43,7 @@
       coerce              QName(PackageNamespace("org.jivesoftware.xiff.data"), "Presence")
       setlocal3
 
-L25:
+L26:
       getlocal0
       getproperty         QName(PackageNamespace(""), "connection")
       getlocal3
